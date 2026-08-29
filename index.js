@@ -1,79 +1,403 @@
-import { createClient } from "redis";
-import "dotenv/config";
-import express from "express";
+const express = require("express");
 const app = express();
-import cors from "cors";
+const cors = require("cors");
+const dns = require("dns");
+require("dotenv").config();
+const port = process.env.PORT || 5000;
+const jwt = require("jsonwebtoken");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
+// Middleware
 app.use(cors());
 app.use(express.json());
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
+const Redis = require("ioredis");
+// const { createClient } = require("redis");
 
-const redis = createClient({
-  url: process.env.REDIS_URL,
+// Use Client
+// const redis = createClient({url: process.env.REDIS_URL});
+
+const redis = new Redis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: 3,
+  enableAutoPipelining: true,
 });
 
-const connectRedis = async () => {
-  await redis.connect();
-  console.log("Connected");
-};
+module.exports = redis;
 
-connectRedis();
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.ab3rgue.mongodb.net/?appName=Cluster0`;
 
-app.get("/", async (req, res) => {
-  res.send({ message: "Hello!" });
+// Create a MongoClient with a MongoClientOptions object to set the Stable API version
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
 });
 
-// String
-// app.post("/redis", async (req, res) => {
-//   const name = await redis.set("Name", "Imtiaz Hossian", {
-//     // EX: 30,
-//   });
-//   res.send("Job Submitted");
-// });
+let db,
+  usersCollection,
+  allPostsCollection,
+  magazinesCollection,
+  TopBannersCollection;
 
-// app.get("/redis", async (req, res) => {
-//   const name = await redis.get("Name");
-//   res.send(name);
-// });
+async function connectDB() {
+  if (db)
+    return {
+      usersCollection,
+      allPostsCollection,
+      magazinesCollection,
+      TopBannersCollection,
+    };
 
-// Hash || Object
-// app.post("/redis", async (req, res) => {
-//   await redis.hSet("user:2", {
-//     name: "Imtiaz",
-//     age: 26,
-//     city: "Dhaka",
-//   });
-//   res.send("Job Submitted");
-// });
+  await client.connect();
+  // await redis.connect(); // ioredis connect willingly
 
-// app.get("/redis", async (req, res) => {
-//   const user = await redis.HGETALL("user:2");
-//   res.send(user);
-// });
+  db = client.db("atibhooj");
+  usersCollection = db.collection("users");
+  allPostsCollection = db.collection("posts");
+  magazinesCollection = db.collection("megazines");
+  TopBannersCollection = db.collection("topBanners");
 
+  await usersCollection.createIndex({ createdAt: -1 });
 
-// List
-// app.post("/redis", async (req, res) => {
-//   await redis.LPUSH("task", "Learing 1");
-//   await redis.RPUSH("task", "Learing 2");
-//   res.send("Job Submitted");
-// });
+  return {
+    usersCollection,
+    allPostsCollection,
+    magazinesCollection,
+    TopBannersCollection,
+  };
+}
 
-// app.get("/redis", async (req, res) => {
-//   const tasks = await redis.lRange("task", 0, -1);
-//   res.send(tasks);
-// });
-
-// Set
-app.post("/redis", async (req, res) => {
-  await redis.SADD("Skills", ["redis", 'node', "node"]);
-  res.send("Job Submitted");
+// Store user
+app.put("/users/:email", async (req, res) => {
+  const email = req.params.email;
+  const user = req.body;
+  const filter = { email: email };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: user,
+  };
+  const result = await usersCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
 });
 
-app.get("/redis", async (req, res) => {
-  const skills = await redis.sMembers("Skills");
-  res.send(skills);
+// Get User
+app.get("/user", async (req, res) => {
+  const userEmail = req.query.email;
+  const result = await usersCollection.find({ email: userEmail }).toArray();
+  res.send(result);
 });
 
-app.listen(5000, () => {
-  console.log("Server is running on port 5000");
+// Get Users
+//  verifyJwt,
+const pendingRequests = new Map();
+app.get("/users", async (req, res) => {
+  const cacheKey = "cache:users";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingRequests.has(cacheKey)) {
+      const result = await pendingRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { usersCollection } = await connectDB();
+        const result = await usersCollection
+          .find({})
+          .sort({ createdAt: -1 })
+          .project({ userName: 1, email: 1, userPassWord: 1 })
+          .limit(10)
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingRequests.set(cacheKey, fetchPromise);
+    const result = await fetchPromise;
+
+    res.status(200).json(result);
+  } catch (error) {
+    pendingRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
+});
+
+// Update Cover Field
+// verifyJwt,
+app.put("/userCover/:email", async (req, res) => {
+  const email = req.params.email;
+  const userCoverPic = req.body;
+  const filter = { userEmail: email };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: userCoverPic,
+  };
+  const result = await usersCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Update Profile Field
+app.put("/userProfile/:email", async (req, res) => {
+  const email = req.params.email;
+  const userProfilePic = req.body;
+  const filter = { userEmail: email };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: userProfilePic,
+  };
+  const result = await usersCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Update Bio
+app.put("/userProfile/:email", async (req, res) => {
+  const email = req.params.email;
+  const userBio = req.body;
+  const filter = { userEmail: email };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: userBio,
+  };
+  const result = await usersCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Update my Following
+//  verifyJwt,
+app.put("/myFollowing/:email", async (req, res) => {
+  const email = req.params.email;
+  const following = req.body;
+  const filter = { userEmail: email };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: following,
+  };
+  const result = await usersCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Update influencer
+// verifyJwt,
+app.put("/myFollowers/:email", async (req, res) => {
+  const email = req.params.email;
+  const followers = req.body;
+  const filter = { userEmail: email };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: followers,
+  };
+  const result = await usersCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Get posts
+app.get("/posts", async (req, res) => {
+  const result = await allPostsCollection
+    .find({})
+    .sort({ $natural: -1 })
+    .toArray();
+  res.send(result);
+});
+
+// POST user post
+// verifyJwt,
+app.post("/posts", async (req, res) => {
+  const postData = req.body;
+  const result = await allPostsCollection.insertOne(postData);
+  res.send(result);
+});
+
+// Get post
+app.get("/post", async (req, res) => {
+  const userEmail = req.query.email;
+  const result = await allPostsCollection
+    .find({ userMail: userEmail })
+    .toArray();
+  res.send(result);
+});
+
+// Get post
+app.get("/post-details/:postId", async (req, res) => {
+  const postId = req.params.postId;
+  const query = { _id: new ObjectId(postId) };
+  const result = await allPostsCollection.findOne(query);
+  res.send(result);
+});
+
+// Liking Method
+app.put("/postLike/:postId", async (req, res) => {
+  const postId = req.params.postId;
+  const totalLike = req.body;
+  const filter = { _id: new ObjectId(postId) };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: totalLike,
+  };
+  const result = await allPostsCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Comment Method
+// verifyJwt,
+app.put("/postComment/:postID", async (req, res) => {
+  const postId = req.params.postID;
+  const updatedComment = req.body;
+  // console.log(postId)
+  // console.log(updatedComment)
+  const filter = { _id: new ObjectId(postId) };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: updatedComment,
+  };
+  const result = await allPostsCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Upload Megazine
+// verifyJwt,
+app.post("/megazineUpload", async (req, res) => {
+  const megazineData = req.body;
+  const result = await megazinesCollection.insertOne(megazineData);
+  res.send(result);
+});
+
+// Get Megazine
+app.get("/megazines", async (req, res) => {
+  const result = await megazinesCollection.find({}).toArray();
+  res.send(result);
+});
+
+// Hanlde Megazine Quantity
+app.put("/megazinesquantity/:id", async (req, res) => {
+  const megazineId = req.params.id;
+  const newQuantity = req.body;
+  const filter = { _id: new ObjectId(megazineId) };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: newQuantity,
+  };
+  const result = await megazinesCollection.updateOne(
+    filter,
+    updateDoc,
+    options,
+  );
+  res.send(result);
+});
+
+// Hanlde Team Atibhooj add members
+// verifyJwt,
+app.put("/atibhoojMemberHandle/:userId", async (req, res) => {
+  const userId = req.params.userId;
+  const Treqest = req.body;
+  const filter = { _id: new ObjectId(userId) };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: Treqest,
+  };
+  const result = await usersCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Hanlde Team Team Atibhooj badge Atibhooj
+// verifyJwt,
+app.put("/atibhoojBadgeHandle/:userId", async (req, res) => {
+  const userId = req.params.userId;
+  const Treqest = req.body;
+  const filter = { _id: new ObjectId(userId) };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: Treqest,
+  };
+  const result = await usersCollection.updateOne(filter, updateDoc, options);
+  res.send(result);
+});
+
+// Get atibhooj team members
+app.get("/teamMembers", async (req, res) => {
+  const result = await usersCollection.find({ teamAtibhooj: true }).toArray();
+  res.send(result);
+});
+
+// Get atibhooj mentors
+app.get("/atibhoojMentors", async (req, res) => {
+  const result = await usersCollection
+    .find({ atibhoojMentors: true })
+    .toArray();
+  res.send(result);
+});
+
+// Check Admin
+app.get("/admin/:email", async (req, res) => {
+  const email = req.params.email;
+  const user = await usersCollection.findOne({ userEmail: email });
+  const isAdmin = user?.role === "admin";
+  res.send({ admin: isAdmin });
+});
+
+// Top Banner Upload
+// verifyJwt,
+app.post("/uploadTopbanner", async (req, res) => {
+  const TopBanner = req.body;
+  const result = await TopBannersCollection.insertOne(TopBanner);
+  res.send(result);
+});
+
+// Get Top Banner
+app.get("/allTopbanner", async (req, res) => {
+  const result = await TopBannersCollection.find({}).toArray();
+  res.send(result);
+});
+
+// Get ইসলামিক Posts
+app.get("/islamicPosts", async (req, res) => {
+  const result = await allPostsCollection
+    .find({ postCate: "ইসলামিক" })
+    .toArray();
+  res.send(result);
+});
+
+// Get গল্প Posts
+app.get("/golpoPosts", async (req, res) => {
+  const result = await allPostsCollection.find({ postCate: "গল্প" }).toArray();
+  res.send(result);
+});
+
+// Get কবিতা Posts
+app.get("/kobitaPosts", async (req, res) => {
+  const result = await allPostsCollection.find({ postCate: "কবিতা" }).toArray();
+  res.send(result);
+});
+
+// Get উপন্যাস Posts
+app.get("/upannasPosts", async (req, res) => {
+  const result = await allPostsCollection
+    .find({ postCate: "উপন্যাস" })
+    .toArray();
+  res.send(result);
+});
+
+// Get জোক Posts
+app.get("/jokesPosts", async (req, res) => {
+  const result = await allPostsCollection.find({ postCate: "জোক" }).toArray();
+  res.send(result);
+});
+
+app.get("/", (req, res) => {
+  res.send("Hello from Atibhoj Server!");
+});
+
+app.listen(port, () => {
+  console.log(`Atibhooj server is running on port ${port}`);
 });
