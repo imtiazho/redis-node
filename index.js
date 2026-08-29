@@ -56,7 +56,7 @@ async function connectDB() {
   db = client.db("atibhooj");
   usersCollection = db.collection("users");
   allPostsCollection = db.collection("posts");
-  magazinesCollection = db.collection("megazines");
+  magazinesCollection = db.collection("magazines");
   TopBannersCollection = db.collection("topBanners");
 
   await usersCollection.createIndex({ createdAt: -1 });
@@ -133,7 +133,7 @@ app.get("/user", async (req, res) => {
 //  verifyJwt,
 const pendingRequests = new Map();
 app.get("/users", async (req, res) => {
-  const cacheKey = "all-users";
+  const cacheKey = "cache:users";
 
   try {
     const cachedData = await redis.get(cacheKey);
@@ -244,9 +244,8 @@ app.put("/myFollowers/:email", async (req, res) => {
 
 // Get posts
 const pendingPostsRequests = new Map();
-
 app.get("/posts", async (req, res) => {
-  const cacheKey = "all-posts";
+  const cacheKey = "cache:all:posts";
 
   try {
     const cachedData = await redis.get(cacheKey);
@@ -297,7 +296,6 @@ app.post("/posts", async (req, res) => {
 
 // Get post
 const pendingUserPostsRequests = new Map();
-
 app.get("/post", async (req, res) => {
   const userEmail = req.query.email;
 
@@ -305,7 +303,7 @@ app.get("/post", async (req, res) => {
     return res.status(400).json({ message: "Email query parameter is required!" });
   }
 
-  const cacheKey = `posts-user-${userEmail}`;
+  const cacheKey = `cache:posts:user:${userEmail}`;
 
   try {
     const cachedData = await redis.get(cacheKey);
@@ -346,11 +344,59 @@ app.get("/post", async (req, res) => {
 });
 
 // Get post
+const pendingPostDetailsRequests = new Map();
 app.get("/post-details/:postId", async (req, res) => {
   const postId = req.params.postId;
-  const query = { _id: new ObjectId(postId) };
-  const result = await allPostsCollection.findOne(query);
-  res.send(result);
+
+  if (!ObjectId.isValid(postId)) {
+    return res.status(400).json({ message: "Invalid post ID format!" });
+  }
+
+  const cacheKey = `cache:post:${postId}`;
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingPostDetailsRequests.has(cacheKey)) {
+      const result = await pendingPostDetailsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { allPostsCollection } = await connectDB();
+        const query = { _id: new ObjectId(postId) };
+        const result = await allPostsCollection.findOne(query);
+
+        if (!result) {
+          return null; 
+        }
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingPostDetailsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingPostDetailsRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+
+    if (!result) {
+      return res.status(404).json({ message: "Post not found!" });
+    }
+
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingPostDetailsRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Liking Method
@@ -391,9 +437,47 @@ app.post("/megazineUpload", async (req, res) => {
 });
 
 // Get Megazine
-app.get("/megazines", async (req, res) => {
-  const result = await megazinesCollection.find({}).toArray();
-  res.send(result);
+const pendingMagazinesRequests = new Map();
+
+app.get("/magazines", async (req, res) => {
+  const cacheKey = "cache:megazines:all";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingMagazinesRequests.has(cacheKey)) {
+      const result = await pendingMagazinesRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { magazinesCollection } = await connectDB();
+        
+        const result = await magazinesCollection
+          .find({})
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingMagazinesRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingMagazinesRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingMagazinesRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Hanlde Megazine Quantity
