@@ -63,6 +63,10 @@ async function connectDB() {
 
   await usersCollection.createIndex({ email: 1 });
 
+  await allPostsCollection.createIndex({ createdAt: -1 });
+
+  await allPostsCollection.createIndex({ userMail: 1 });
+
   return {
     usersCollection,
     allPostsCollection,
@@ -85,7 +89,6 @@ app.put("/users/:email", async (req, res) => {
 });
 
 // Get User
-// এই Map-টি রাউটের বাইরে ডিক্লেয়ার করুন
 const pendingUserRequests = new Map();
 app.get("/user", async (req, res) => {
   const userEmail = req.query.email;
@@ -130,7 +133,7 @@ app.get("/user", async (req, res) => {
 //  verifyJwt,
 const pendingRequests = new Map();
 app.get("/users", async (req, res) => {
-  const cacheKey = "cache:users";
+  const cacheKey = "all-users";
 
   try {
     const cachedData = await redis.get(cacheKey);
@@ -240,12 +243,48 @@ app.put("/myFollowers/:email", async (req, res) => {
 });
 
 // Get posts
+const pendingPostsRequests = new Map();
+
 app.get("/posts", async (req, res) => {
-  const result = await allPostsCollection
-    .find({})
-    .sort({ $natural: -1 })
-    .toArray();
-  res.send(result);
+  const cacheKey = "all-posts";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingPostsRequests.has(cacheKey)) {
+      const result = await pendingPostsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { allPostsCollection } = await connectDB();
+        
+        const result = await allPostsCollection
+          .find({})
+          .sort({ _id: -1 })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingPostsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingPostsRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingPostsRequests.delete(cacheKey); 
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // POST user post
@@ -257,12 +296,53 @@ app.post("/posts", async (req, res) => {
 });
 
 // Get post
+const pendingUserPostsRequests = new Map();
+
 app.get("/post", async (req, res) => {
   const userEmail = req.query.email;
-  const result = await allPostsCollection
-    .find({ userMail: userEmail })
-    .toArray();
-  res.send(result);
+
+  if (!userEmail) {
+    return res.status(400).json({ message: "Email query parameter is required!" });
+  }
+
+  const cacheKey = `posts-user-${userEmail}`;
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingUserPostsRequests.has(cacheKey)) {
+      const result = await pendingUserPostsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { allPostsCollection } = await connectDB();
+        
+        const result = await allPostsCollection
+          .find({ userMail: userEmail })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingUserPostsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingUserPostsRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingUserPostsRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Get post
