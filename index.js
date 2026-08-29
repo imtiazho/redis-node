@@ -61,6 +61,8 @@ async function connectDB() {
 
   await usersCollection.createIndex({ createdAt: -1 });
 
+  await usersCollection.createIndex({ email: 1 });
+
   return {
     usersCollection,
     allPostsCollection,
@@ -83,10 +85,45 @@ app.put("/users/:email", async (req, res) => {
 });
 
 // Get User
+// এই Map-টি রাউটের বাইরে ডিক্লেয়ার করুন
+const pendingUserRequests = new Map();
 app.get("/user", async (req, res) => {
   const userEmail = req.query.email;
-  const result = await usersCollection.find({ email: userEmail }).toArray();
-  res.send(result);
+  if (!userEmail) return res.status(400).json({ message: "Email is required" });
+
+  const cacheKey = `cache:user:${userEmail}`;
+
+  try {
+    const cachedData = await redis.get(cacheKey); 
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData)); 
+    }
+
+    if (pendingUserRequests.has(cacheKey)) {
+      const result = await pendingUserRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { usersCollection } = await connectDB();
+        const result = await usersCollection.find({ email: userEmail }).toArray();
+        
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180); 
+        return result;
+      } finally {
+        pendingUserRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingUserRequests.set(cacheKey, fetchPromise);
+    const result = await fetchPromise;
+
+    res.status(200).json(result);
+  } catch (error) {
+    pendingUserRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Get Users
