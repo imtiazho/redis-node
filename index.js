@@ -298,9 +298,35 @@ app.get("/posts", async (req, res) => {
 // POST user post
 // verifyJwt,
 app.post("/posts", async (req, res) => {
-  const postData = req.body;
-  const result = await allPostsCollection.insertOne(postData);
-  res.send(result);
+  try {
+    const postData = req.body;
+    const { allPostsCollection } = await connectDB();
+    
+    const result = await allPostsCollection.insertOne(postData);
+
+    await redis.del("cache:all:posts");
+
+    const category = postData.postCate;
+    if (category === "ইসলামিক") {
+      await redis.del("cache:posts:category:islamic");
+    } else if (category === "গল্প") {
+      await redis.del("cache:posts:category:golpo");
+    } else if (category === "কবিতা") {
+      await redis.del("cache:posts:category:kobita");
+    } else if (category === "উপন্যাস") {
+      await redis.del("cache:posts:category:upannas");
+    } else if (category === "জোক") {
+      await redis.del("cache:posts:category:jokes");
+    }
+
+    if (postData.userMail) {
+      await redis.del(`cache:posts:user:${postData.userMail}`);
+    }
+
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to create post!", error: error.message });
+  }
 });
 
 // Get post
