@@ -301,7 +301,7 @@ app.post("/posts", async (req, res) => {
   try {
     const postData = req.body;
     const { allPostsCollection } = await connectDB();
-    
+
     const result = await allPostsCollection.insertOne(postData);
 
     await redis.del("cache:all:posts");
@@ -325,7 +325,9 @@ app.post("/posts", async (req, res) => {
 
     res.status(201).json(result);
   } catch (error) {
-    res.status(500).json({ message: "Failed to create post!", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to create post!", error: error.message });
   }
 });
 
@@ -466,14 +468,24 @@ app.put("/postComment/:postID", async (req, res) => {
 // Upload Megazine
 // verifyJwt,
 app.post("/megazineUpload", async (req, res) => {
-  const megazineData = req.body;
-  const result = await megazinesCollection.insertOne(megazineData);
-  res.send(result);
+  try {
+    const megazineData = req.body;
+    const { magazinesCollection } = await connectDB();
+
+    const result = await magazinesCollection.insertOne(megazineData);
+
+    await redis.del("cache:megazines:all");
+
+    res.status(201).json(result);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to upload magazine!", error: error.message });
+  }
 });
 
 // Get Megazine
 const pendingMagazinesRequests = new Map();
-
 app.get("/magazines", async (req, res) => {
   const cacheKey = "cache:megazines:all";
 
@@ -668,7 +680,7 @@ app.get("/admin/:email", async (req, res) => {
       try {
         const { usersCollection } = await connectDB();
         const user = await usersCollection.findOne({ userEmail: email });
-        
+
         const isAdmin = user?.role === "admin";
         const result = { admin: isAdmin };
 
@@ -681,10 +693,9 @@ app.get("/admin/:email", async (req, res) => {
     })();
 
     pendingAdminCheckRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingAdminCheckRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -718,10 +729,8 @@ app.get("/allTopbanner", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { TopBannersCollection } = await connectDB();
-        
-        const result = await TopBannersCollection
-          .find({})
-          .toArray();
+
+        const result = await TopBannersCollection.find({}).toArray();
 
         await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
 
@@ -732,10 +741,9 @@ app.get("/allTopbanner", async (req, res) => {
     })();
 
     pendingTopBannerRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingTopBannerRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -762,7 +770,7 @@ app.get("/islamicPosts", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { allPostsCollection } = await connectDB();
-        
+
         const result = await allPostsCollection
           .find({ postCate: "ইসলামিক" })
           .toArray();
@@ -776,10 +784,9 @@ app.get("/islamicPosts", async (req, res) => {
     })();
 
     pendingIslamicPostsRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingIslamicPostsRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -805,7 +812,7 @@ app.get("/golpoPosts", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { allPostsCollection } = await connectDB();
-        
+
         const result = await allPostsCollection
           .find({ postCate: "গল্প" })
           .toArray();
@@ -819,10 +826,9 @@ app.get("/golpoPosts", async (req, res) => {
     })();
 
     pendingGolpoPostsRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingGolpoPostsRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -848,7 +854,7 @@ app.get("/kobitaPosts", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { allPostsCollection } = await connectDB();
-        
+
         const result = await allPostsCollection
           .find({ postCate: "কবিতা" })
           .toArray();
@@ -862,10 +868,9 @@ app.get("/kobitaPosts", async (req, res) => {
     })();
 
     pendingKobitaPostsRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingKobitaPostsRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -891,7 +896,7 @@ app.get("/upannasPosts", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { allPostsCollection } = await connectDB();
-        
+
         const result = await allPostsCollection
           .find({ postCate: "উপন্যাস" })
           .toArray();
@@ -905,10 +910,9 @@ app.get("/upannasPosts", async (req, res) => {
     })();
 
     pendingUpannasPostsRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingUpannasPostsRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -934,7 +938,7 @@ app.get("/jokesPosts", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { allPostsCollection } = await connectDB();
-        
+
         const result = await allPostsCollection
           .find({ postCate: "জোক" })
           .toArray();
@@ -948,10 +952,9 @@ app.get("/jokesPosts", async (req, res) => {
     })();
 
     pendingJokesPostsRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingJokesPostsRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
