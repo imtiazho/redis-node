@@ -90,7 +90,7 @@ app.put("/users/:email", async (req, res) => {
 
   try {
     const { usersCollection } = await connectDB();
-    const filter = { userEmail: email }; 
+    const filter = { userEmail: email };
     const options = { upsert: true };
     const updateDoc = {
       $set: user,
@@ -100,12 +100,16 @@ app.put("/users/:email", async (req, res) => {
 
     await redis.del(`cache:admin:${email}`);
 
+    await redis.del("cache:users");
+
     await redis.del("cache:team:members");
     await redis.del("cache:atibhooj:mentors");
 
     res.status(200).json(result);
   } catch (error) {
-    res.status(500).json({ message: "Failed to update user!", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to update user!", error: error.message });
   }
 });
 
@@ -208,6 +212,10 @@ app.put("/userCover/:email", async (req, res) => {
     $set: userCoverPic,
   };
   const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del(`cache:user:${email}`);
+  await redis.del("cache:users");
+  
   res.send(result);
 });
 
@@ -728,7 +736,9 @@ app.post("/uploadTopbanner", async (req, res) => {
 
     res.status(201).json(result);
   } catch (error) {
-    res.status(500).json({ message: "Failed to upload top banner!", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to upload top banner!", error: error.message });
   }
 });
 
