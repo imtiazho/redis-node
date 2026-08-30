@@ -69,6 +69,8 @@ async function connectDB() {
 
   await usersCollection.createIndex({ teamAtibhooj: 1 });
 
+  await usersCollection.createIndex({ atibhoojMentors: 1 });
+
   return {
     usersCollection,
     allPostsCollection,
@@ -99,9 +101,9 @@ app.get("/user", async (req, res) => {
   const cacheKey = `cache:user:${userEmail}`;
 
   try {
-    const cachedData = await redis.get(cacheKey); 
+    const cachedData = await redis.get(cacheKey);
     if (cachedData) {
-      return res.status(200).json(JSON.parse(cachedData)); 
+      return res.status(200).json(JSON.parse(cachedData));
     }
 
     if (pendingUserRequests.has(cacheKey)) {
@@ -112,9 +114,11 @@ app.get("/user", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { usersCollection } = await connectDB();
-        const result = await usersCollection.find({ email: userEmail }).toArray();
-        
-        await redis.set(cacheKey, JSON.stringify(result), "EX", 180); 
+        const result = await usersCollection
+          .find({ email: userEmail })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
         return result;
       } finally {
         pendingUserRequests.delete(cacheKey);
@@ -263,7 +267,7 @@ app.get("/posts", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { allPostsCollection } = await connectDB();
-        
+
         const result = await allPostsCollection
           .find({})
           .sort({ _id: -1 })
@@ -278,12 +282,11 @@ app.get("/posts", async (req, res) => {
     })();
 
     pendingPostsRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
-    pendingPostsRequests.delete(cacheKey); 
+    pendingPostsRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
   }
 });
@@ -302,7 +305,9 @@ app.get("/post", async (req, res) => {
   const userEmail = req.query.email;
 
   if (!userEmail) {
-    return res.status(400).json({ message: "Email query parameter is required!" });
+    return res
+      .status(400)
+      .json({ message: "Email query parameter is required!" });
   }
 
   const cacheKey = `cache:posts:user:${userEmail}`;
@@ -321,7 +326,7 @@ app.get("/post", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { allPostsCollection } = await connectDB();
-        
+
         const result = await allPostsCollection
           .find({ userMail: userEmail })
           .toArray();
@@ -335,10 +340,9 @@ app.get("/post", async (req, res) => {
     })();
 
     pendingUserPostsRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingUserPostsRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -374,7 +378,7 @@ app.get("/post-details/:postId", async (req, res) => {
         const result = await allPostsCollection.findOne(query);
 
         if (!result) {
-          return null; 
+          return null;
         }
 
         await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
@@ -386,7 +390,7 @@ app.get("/post-details/:postId", async (req, res) => {
     })();
 
     pendingPostDetailsRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
 
     if (!result) {
@@ -394,7 +398,6 @@ app.get("/post-details/:postId", async (req, res) => {
     }
 
     res.status(200).json(result);
-
   } catch (error) {
     pendingPostDetailsRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -458,10 +461,8 @@ app.get("/magazines", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { magazinesCollection } = await connectDB();
-        
-        const result = await magazinesCollection
-          .find({})
-          .toArray();
+
+        const result = await magazinesCollection.find({}).toArray();
 
         await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
 
@@ -472,10 +473,9 @@ app.get("/magazines", async (req, res) => {
     })();
 
     pendingMagazinesRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingMagazinesRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -546,7 +546,7 @@ app.get("/teamMembers", async (req, res) => {
     const fetchPromise = (async () => {
       try {
         const { usersCollection } = await connectDB();
-        
+
         const result = await usersCollection
           .find({ teamAtibhooj: true })
           .toArray();
@@ -560,10 +560,9 @@ app.get("/teamMembers", async (req, res) => {
     })();
 
     pendingTeamMembersRequests.set(cacheKey, fetchPromise);
-    
+
     const result = await fetchPromise;
     res.status(200).json(result);
-
   } catch (error) {
     pendingTeamMembersRequests.delete(cacheKey);
     res.status(500).json({ message: "Server error!", error: error.message });
@@ -571,11 +570,45 @@ app.get("/teamMembers", async (req, res) => {
 });
 
 // Get atibhooj mentors
+const pendingMentorsRequests = new Map();
 app.get("/atibhoojMentors", async (req, res) => {
-  const result = await usersCollection
-    .find({ atibhoojMentors: true })
-    .toArray();
-  res.send(result);
+  const cacheKey = "cache:atibhooj:mentors";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingMentorsRequests.has(cacheKey)) {
+      const result = await pendingMentorsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { usersCollection } = await connectDB();
+
+        const result = await usersCollection
+          .find({ atibhoojMentors: true })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingMentorsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingMentorsRequests.set(cacheKey, fetchPromise);
+
+    const result = await fetchPromise;
+    res.status(200).json(result);
+  } catch (error) {
+    pendingMentorsRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Check Admin
