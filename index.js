@@ -71,6 +71,8 @@ async function connectDB() {
 
   await usersCollection.createIndex({ atibhoojMentors: 1 });
 
+  await usersCollection.createIndex({ userEmail: 1 });
+
   return {
     usersCollection,
     allPostsCollection,
@@ -612,11 +614,53 @@ app.get("/atibhoojMentors", async (req, res) => {
 });
 
 // Check Admin
+const pendingAdminCheckRequests = new Map();
+
 app.get("/admin/:email", async (req, res) => {
   const email = req.params.email;
-  const user = await usersCollection.findOne({ userEmail: email });
-  const isAdmin = user?.role === "admin";
-  res.send({ admin: isAdmin });
+
+  if (!email) {
+    return res.status(400).json({ message: "Email parameter is required!" });
+  }
+
+  const cacheKey = `cache:admin:${email}`;
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingAdminCheckRequests.has(cacheKey)) {
+      const result = await pendingAdminCheckRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { usersCollection } = await connectDB();
+        const user = await usersCollection.findOne({ userEmail: email });
+        
+        const isAdmin = user?.role === "admin";
+        const result = { admin: isAdmin };
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingAdminCheckRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingAdminCheckRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingAdminCheckRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Top Banner Upload
