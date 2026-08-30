@@ -67,6 +67,8 @@ async function connectDB() {
 
   await allPostsCollection.createIndex({ userMail: 1 });
 
+  await usersCollection.createIndex({ teamAtibhooj: 1 });
+
   return {
     usersCollection,
     allPostsCollection,
@@ -526,9 +528,46 @@ app.put("/atibhoojBadgeHandle/:userId", async (req, res) => {
 });
 
 // Get atibhooj team members
+const pendingTeamMembersRequests = new Map();
 app.get("/teamMembers", async (req, res) => {
-  const result = await usersCollection.find({ teamAtibhooj: true }).toArray();
-  res.send(result);
+  const cacheKey = "cache:team:members";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingTeamMembersRequests.has(cacheKey)) {
+      const result = await pendingTeamMembersRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { usersCollection } = await connectDB();
+        
+        const result = await usersCollection
+          .find({ teamAtibhooj: true })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingTeamMembersRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingTeamMembersRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingTeamMembersRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Get atibhooj mentors
