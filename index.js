@@ -672,9 +672,46 @@ app.post("/uploadTopbanner", async (req, res) => {
 });
 
 // Get Top Banner
+const pendingTopBannerRequests = new Map();
 app.get("/allTopbanner", async (req, res) => {
-  const result = await TopBannersCollection.find({}).toArray();
-  res.send(result);
+  const cacheKey = "cache:topbanners:all";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingTopBannerRequests.has(cacheKey)) {
+      const result = await pendingTopBannerRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { TopBannersCollection } = await connectDB();
+        
+        const result = await TopBannersCollection
+          .find({})
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingTopBannerRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingTopBannerRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingTopBannerRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Get ইসলামিক Posts
