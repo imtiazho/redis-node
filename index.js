@@ -73,6 +73,8 @@ async function connectDB() {
 
   await usersCollection.createIndex({ userEmail: 1 });
 
+  await allPostsCollection.createIndex({ postCate: 1 });
+
   return {
     usersCollection,
     allPostsCollection,
@@ -715,37 +717,219 @@ app.get("/allTopbanner", async (req, res) => {
 });
 
 // Get ইসলামিক Posts
+const pendingIslamicPostsRequests = new Map();
+
 app.get("/islamicPosts", async (req, res) => {
-  const result = await allPostsCollection
-    .find({ postCate: "ইসলামিক" })
-    .toArray();
-  res.send(result);
+  const cacheKey = "cache:posts:category:islamic";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingIslamicPostsRequests.has(cacheKey)) {
+      const result = await pendingIslamicPostsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { allPostsCollection } = await connectDB();
+        
+        const result = await allPostsCollection
+          .find({ postCate: "ইসলামিক" })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingIslamicPostsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingIslamicPostsRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingIslamicPostsRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Get গল্প Posts
+const pendingGolpoPostsRequests = new Map();
 app.get("/golpoPosts", async (req, res) => {
-  const result = await allPostsCollection.find({ postCate: "গল্প" }).toArray();
-  res.send(result);
+  const cacheKey = "cache:posts:category:golpo";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingGolpoPostsRequests.has(cacheKey)) {
+      const result = await pendingGolpoPostsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { allPostsCollection } = await connectDB();
+        
+        const result = await allPostsCollection
+          .find({ postCate: "গল্প" })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingGolpoPostsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingGolpoPostsRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingGolpoPostsRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Get কবিতা Posts
+const pendingKobitaPostsRequests = new Map();
 app.get("/kobitaPosts", async (req, res) => {
-  const result = await allPostsCollection.find({ postCate: "কবিতা" }).toArray();
-  res.send(result);
+  const cacheKey = "cache:posts:category:kobita";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingKobitaPostsRequests.has(cacheKey)) {
+      const result = await pendingKobitaPostsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { allPostsCollection } = await connectDB();
+        
+        const result = await allPostsCollection
+          .find({ postCate: "কবিতা" })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingKobitaPostsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingKobitaPostsRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingKobitaPostsRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Get উপন্যাস Posts
+const pendingUpannasPostsRequests = new Map();
 app.get("/upannasPosts", async (req, res) => {
-  const result = await allPostsCollection
-    .find({ postCate: "উপন্যাস" })
-    .toArray();
-  res.send(result);
+  const cacheKey = "cache:posts:category:upannas";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingUpannasPostsRequests.has(cacheKey)) {
+      const result = await pendingUpannasPostsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { allPostsCollection } = await connectDB();
+        
+        const result = await allPostsCollection
+          .find({ postCate: "উপন্যাস" })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingUpannasPostsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingUpannasPostsRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingUpannasPostsRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 // Get জোক Posts
+const pendingJokesPostsRequests = new Map();
 app.get("/jokesPosts", async (req, res) => {
-  const result = await allPostsCollection.find({ postCate: "জোক" }).toArray();
-  res.send(result);
+  const cacheKey = "cache:posts:category:jokes";
+
+  try {
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+
+    if (pendingJokesPostsRequests.has(cacheKey)) {
+      const result = await pendingJokesPostsRequests.get(cacheKey);
+      return res.status(200).json(result);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const { allPostsCollection } = await connectDB();
+        
+        const result = await allPostsCollection
+          .find({ postCate: "জোক" })
+          .toArray();
+
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
+
+        return result;
+      } finally {
+        pendingJokesPostsRequests.delete(cacheKey);
+      }
+    })();
+
+    pendingJokesPostsRequests.set(cacheKey, fetchPromise);
+    
+    const result = await fetchPromise;
+    res.status(200).json(result);
+
+  } catch (error) {
+    pendingJokesPostsRequests.delete(cacheKey);
+    res.status(500).json({ message: "Server error!", error: error.message });
+  }
 });
 
 app.get("/", (req, res) => {
