@@ -215,7 +215,7 @@ app.put("/userCover/:email", async (req, res) => {
 
   await redis.del(`cache:user:${email}`);
   await redis.del("cache:users");
-  
+
   res.send(result);
 });
 
@@ -229,6 +229,10 @@ app.put("/userProfile/:email", async (req, res) => {
     $set: userProfilePic,
   };
   const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del("cache:users");
+  await redis.del(`cache:user:${email}`);
+
   res.send(result);
 });
 
@@ -242,6 +246,10 @@ app.put("/userProfile/:email", async (req, res) => {
     $set: userBio,
   };
   const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del("cache:users");
+  await redis.del(`cache:user:${email}`);
+
   res.send(result);
 });
 
@@ -256,6 +264,10 @@ app.put("/myFollowing/:email", async (req, res) => {
     $set: following,
   };
   const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del("cache:users");
+  await redis.del(`cache:user:${email}`);
+
   res.send(result);
 });
 
@@ -270,6 +282,10 @@ app.put("/myFollowers/:email", async (req, res) => {
     $set: followers,
   };
   const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del("cache:users");
+  await redis.del(`cache:user:${email}`);
+
   res.send(result);
 });
 
@@ -467,6 +483,15 @@ app.put("/postLike/:postId", async (req, res) => {
     $set: totalLike,
   };
   const result = await allPostsCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del("cache:all:posts");
+  await redis.del(`cache:post:${postId}`);
+  await redis.del("cache:posts:category:islamic");
+  await redis.del("cache:posts:category:golpo");
+  await redis.del("cache:posts:category:kobita");
+  await redis.del("cache:posts:category:upannas");
+  await redis.del("cache:posts:category:jokes");
+
   res.send(result);
 });
 
@@ -475,14 +500,22 @@ app.put("/postLike/:postId", async (req, res) => {
 app.put("/postComment/:postID", async (req, res) => {
   const postId = req.params.postID;
   const updatedComment = req.body;
-  // console.log(postId)
-  // console.log(updatedComment)
+
   const filter = { _id: new ObjectId(postId) };
   const options = { upsert: true };
   const updateDoc = {
     $set: updatedComment,
   };
   const result = await allPostsCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del("cache:all:posts");
+  await redis.del(`cache:post:${postId}`);
+  await redis.del("cache:posts:category:islamic");
+  await redis.del("cache:posts:category:golpo");
+  await redis.del("cache:posts:category:kobita");
+  await redis.del("cache:posts:category:upannas");
+  await redis.del("cache:posts:category:jokes");
+
   res.send(result);
 });
 
@@ -559,6 +592,9 @@ app.put("/megazinesquantity/:id", async (req, res) => {
     updateDoc,
     options,
   );
+
+  await redis.del("cache:megazines:all");
+
   res.send(result);
 });
 
@@ -573,6 +609,12 @@ app.put("/atibhoojMemberHandle/:userId", async (req, res) => {
     $set: Treqest,
   };
   const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del("cache:users");
+  await redis.del(`cache:user:${userId}`);
+  await redis.del("cache:atibhooj:mentors");
+  await redis.del("cache:team:members");
+
   res.send(result);
 });
 
@@ -587,6 +629,13 @@ app.put("/atibhoojBadgeHandle/:userId", async (req, res) => {
     $set: Treqest,
   };
   const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+  await redis.del("cache:users");
+  await redis.del(`cache:user:${userId}`);
+
+  await redis.del("cache:atibhooj:mentors");
+  await redis.del("cache:team:members");
+
   res.send(result);
 });
 
