@@ -87,13 +87,26 @@ async function connectDB() {
 app.put("/users/:email", async (req, res) => {
   const email = req.params.email;
   const user = req.body;
-  const filter = { email: email };
-  const options = { upsert: true };
-  const updateDoc = {
-    $set: user,
-  };
-  const result = await usersCollection.updateOne(filter, updateDoc, options);
-  res.send(result);
+
+  try {
+    const { usersCollection } = await connectDB();
+    const filter = { userEmail: email }; 
+    const options = { upsert: true };
+    const updateDoc = {
+      $set: user,
+    };
+
+    const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+    await redis.del(`cache:admin:${email}`);
+
+    await redis.del("cache:team:members");
+    await redis.del("cache:atibhooj:mentors");
+
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update user!", error: error.message });
+  }
 });
 
 // Get User
@@ -705,9 +718,18 @@ app.get("/admin/:email", async (req, res) => {
 // Top Banner Upload
 // verifyJwt,
 app.post("/uploadTopbanner", async (req, res) => {
-  const TopBanner = req.body;
-  const result = await TopBannersCollection.insertOne(TopBanner);
-  res.send(result);
+  try {
+    const TopBanner = req.body;
+    const { TopBannersCollection } = await connectDB();
+
+    const result = await TopBannersCollection.insertOne(TopBanner);
+
+    await redis.del("cache:topbanners:all");
+
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to upload top banner!", error: error.message });
+  }
 });
 
 // Get Top Banner
