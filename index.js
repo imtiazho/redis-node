@@ -18,11 +18,11 @@ const Redis = require("ioredis");
 // const redis = createClient({url: process.env.REDIS_URL});
 
 const redis = new Redis(process.env.REDIS_URL, {
-  maxRetriesPerRequest: 3,
-  enableAutoPipelining: true,
+  retryStrategy(times) {
+    const delay = Math.min(times * 50, 2000);
+    return delay;
+  },
 });
-
-module.exports = redis;
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.ab3rgue.mongodb.net/?appName=Cluster0`;
 
@@ -59,7 +59,7 @@ async function connectDB() {
   magazinesCollection = db.collection("magazines");
   TopBannersCollection = db.collection("topBanners");
 
-  await usersCollection.createIndex({ createdAt: -1 });
+  // await usersCollection.createIndex({ createdAt: -1 });
 
   await usersCollection.createIndex({ email: 1 });
 
@@ -1044,6 +1044,10 @@ app.get("/jokesPosts", async (req, res) => {
 
 app.get("/", (req, res) => {
   res.send("Hello from Atibhoj Server!");
+});
+
+redis.on("connect", () => {
+  console.log("Connected to Local Redis via Docker successfully!");
 });
 
 app.listen(port, () => {
