@@ -12,10 +12,20 @@ app.use(cors());
 app.use(express.json());
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
 const Redis = require("ioredis");
+const { Queue, Worker } = require("bullmq");
 // const { createClient } = require("redis");
 
 // Use Client
 // const redis = createClient({url: process.env.REDIS_URL});
+
+// Redis Connection Configuration for BullMQ
+const queueConnection = {
+  host: "127.0.0.1",
+  port: 6379,
+};
+
+// Create a queue for handling post requests
+const postQueue = new Queue("post-queue", { connection: queueConnection });
 
 const redis = new Redis(process.env.REDIS_URL, {
   retryStrategy(times) {
@@ -312,6 +322,7 @@ app.get("/posts", async (req, res) => {
         const result = await allPostsCollection
           .find({})
           .sort({ _id: -1 })
+          .limit(10)
           .toArray();
 
         await redis.set(cacheKey, JSON.stringify(result), "EX", 180);
@@ -334,13 +345,50 @@ app.get("/posts", async (req, res) => {
 
 // POST user post
 // verifyJwt,
+// app.post("/posts", async (req, res) => {
+//   try {
+//     const postData = req.body;
+    
+//     const { allPostsCollection } = await connectDB();
+
+//     const result = await allPostsCollection.insertOne(postData);
+
+//     await redis.del("cache:all:posts");
+
+//     const category = postData.postCate;
+//     if (category === "ইসলামিক") {
+//       await redis.del("cache:posts:category:islamic");
+//     } else if (category === "গল্প") {
+//       await redis.del("cache:posts:category:golpo");
+//     } else if (category === "কবিতা") {
+//       await redis.del("cache:posts:category:kobita");
+//     } else if (category === "উপন্যাস") {
+//       await redis.del("cache:posts:category:upannas");
+//     } else if (category === "জোক") {
+//       await redis.del("cache:posts:category:jokes");
+//     }
+
+//     if (postData.userMail) {
+//       await redis.del(`cache:posts:user:${postData.userMail}`);
+//     }
+
+//     res.status(201).json(result);
+//   } catch (error) {
+//     res
+//       .status(500)
+//       .json({ message: "Failed to create post!", error: error.message });
+//   }
+// });
+
+// POST user post (Optimized with Message Queue)
 app.post("/posts", async (req, res) => {
   try {
     const postData = req.body;
-    const { allPostsCollection } = await connectDB();
 
-    const result = await allPostsCollection.insertOne(postData);
+    // ১. রিকোয়েস্ট সরাসরি ডাটাবেজে না পাঠিয়ে কিউতে ফেলে দিলাম
+    await postQueue.add("create-post", postData);
 
+    // ২. ক্যাশ ইনভ্যালিডেশন (সরাসরি রেসপন্স দেওয়ার আগে ক্যাশ ক্লিয়ার করে দেওয়া ভালো)
     await redis.del("cache:all:posts");
 
     const category = postData.postCate;
@@ -360,11 +408,15 @@ app.post("/posts", async (req, res) => {
       await redis.del(`cache:posts:user:${postData.userMail}`);
     }
 
-    res.status(201).json(result);
+    // ৩. ক্লায়েন্টকে সাথে সাথে ইনস্ট্যান্ট রেসপন্স দিয়ে দেওয়া (No Latency / No Timeout)
+    res.status(202).json({
+      success: true,
+      message: "Post request received and queued successfully!",
+    });
   } catch (error) {
     res
       .status(500)
-      .json({ message: "Failed to create post!", error: error.message });
+      .json({ message: "Failed to queue post!", error: error.message });
   }
 });
 
@@ -1049,6 +1101,59 @@ app.get("/", (req, res) => {
 redis.on("connect", () => {
   console.log("Connected to Local Redis via Docker successfully!");
 });
+
+
+// --- BACKGROUND WORKER & BATCHING FOR POSTS ---
+let postBatchQueue = [];
+const BATCH_SIZE = 50; // একসাথে ৫০টি পোস্ট জমলে ডাটাবেজে Bulk Insert করবে
+
+async function flushPostBatch() {
+  if (postBatchQueue.length === 0) return;
+
+  const postsToInsert = [...postBatchQueue];
+  postBatchQueue = []; // ক্লিয়ার করে দিলাম
+
+  try {
+    const { allPostsCollection } = await connectDB();
+    await allPostsCollection.insertMany(postsToInsert);
+    console.log(`Successfully inserted ${postsToInsert.length} posts in bulk!`);
+  } catch (error) {
+    console.error("Bulk insert failed:", error);
+  }
+}
+
+// Worker Setup
+const postWorker = new Worker(
+  "post-queue",
+  async (job) => {
+    postBatchQueue.push(job.data);
+
+    // যদি ব্যাচ সাইজ পূর্ণ হয়, তবে সাথে সাথে সেভ করে দেবো
+    if (postBatchQueue.length >= BATCH_SIZE) {
+      await flushPostBatch();
+    }
+  },
+  { connection: queueConnection }
+);
+
+// সেফটি টাইমার: যদি কম রিকোয়েস্ট থাকে, তবুও যেন ম্যাক্সিমাম ১ সেকেন্ডের মধ্যে ডেটা সেভ হয়ে যায়
+setInterval(async () => {
+  if (postBatchQueue.length > 0) {
+    await flushPostBatch();
+  }
+}, 1000);
+
+postWorker.on("failed", (job, err) => {
+  console.error(`Post Job ${job.id} failed:`, err.message);
+});
+
+process.on('SIGINT', async () => {
+  console.log('Shutting down gracefully...');
+  if (postBatchQueue.length > 0) {
+    await flushPostBatch(); // সার্ভার বন্ধ হওয়ার আগে বাকি ডেটা সেভ করে নাও
+  }
+  process.exit(0);
+})
 
 app.listen(port, () => {
   console.log(`Atibhooj server is running on port ${port}`);
